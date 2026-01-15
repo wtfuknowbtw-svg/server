@@ -28,13 +28,15 @@ app.use(morgan('dev'));
 const authRoutes = require('./routes/authRoutes');
 const inquiryRoutes = require('./routes/inquiryRoutes');
 const bookingRoutes = require('./routes/bookingRoutes');
+const statsRoutes = require('./routes/statsRoutes');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/inquiries', inquiryRoutes);
 app.use('/api/bookings', bookingRoutes);
+app.use('/api/stats', statsRoutes);
 
 app.get('/', (req, res) => {
-    res.send({ message: 'Cortexaa API is running 🚀' });
+    res.send({ message: 'Sutratech API is running 🚀' });
 });
 
 // Start Server

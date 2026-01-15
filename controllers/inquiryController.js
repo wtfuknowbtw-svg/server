@@ -1,11 +1,5 @@
 const supabase = require('../config/supabaseClient');
 
-const MOCK_INQUIRIES = [
-    { id: 1, name: "Sarah Williams", email: "sarah@tech.com", service: "Web Development", message: "Need a new website.", date: "2023-10-25" },
-    { id: 2, name: "Michael Chen", email: "m.chen@ai.corp", service: "AI Integration", message: "Integrating GPT-4.", date: "2023-10-24" },
-    { id: 3, name: "Emma Davis", email: "emma@startup.io", service: "Mobile App", message: "Flutter app needed.", date: "2023-10-23" }
-];
-
 const getInquiries = async (req, res) => {
     try {
         const isConfigured = process.env.SUPABASE_URL && (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY);
@@ -16,68 +10,107 @@ const getInquiries = async (req, res) => {
             return res.status(200).json(data);
         }
 
-        // Mock Fallback
-        console.log('⚠️  Using MOCK DATA for Inquiries');
-        res.status(200).json(MOCK_INQUIRIES);
+        // Return empty array if not configured
+        return res.status(200).json([]);
 
     } catch (error) {
+        console.error('Get Inquiries Error:', error);
         res.status(500).json({ error: error.message });
     }
 };
 
 const createInquiry = async (req, res) => {
-    const { name, email, service, message } = req.body;
-
     try {
+        const { name, email, service, message } = req.body;
+
+        // Validation
+        if (!name || !email || !message) {
+            return res.status(400).json({ error: 'Name, email, and message are required fields.' });
+        }
+
         // 1. Save to Supabase if configured
         const isConfigured = process.env.SUPABASE_URL && (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY);
-        let savedData = { name, email, service, message, created_at: new Date() };
+        let savedData = null;
 
         if (isConfigured && !process.env.SUPABASE_URL.includes('your-project-url')) {
-            const { data, error } = await supabase.from('inquiries').insert([
-                { name, email, service, message }
-            ]).select();
+            if (supabase) {
+                try {
+                    const { data, error } = await supabase.from('inquiries').insert([
+                        { name, email, service, message }
+                    ]).select();
 
-            if (error) {
-                console.error('Supabase Insert Error:', error.message);
-                // Return error to frontend so user knows it failed
-                return res.status(500).json({ error: `Database Error: ${error.message}` });
+                    if (error) {
+                        console.error('Supabase Insert Error:', error.message);
+                    } else if (data) {
+                        savedData = data[0];
+                    }
+                } catch (err) {
+                    console.error('Supabase connection error:', err.message);
+                }
+            } else {
+                console.warn('Supabase configuration detected but client is null. Check supabaseClient.js');
             }
-            savedData = data[0];
-        } else {
-            console.log('📝 Mock: Saved inquiry to local memory');
-            MOCK_INQUIRIES.unshift({ id: Date.now(), ...savedData });
         }
 
         // 2. Forward to Google Sheets if Webhook URL provided
         if (process.env.GOOGLE_SHEETS_WEBHOOK_URL) {
-            fetch(process.env.GOOGLE_SHEETS_WEBHOOK_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    timestamp: new Date().toISOString(),
-                    name,
-                    email,
-                    service,
-                    message
-                })
-            }).then(response => {
+            try {
+                // Ensure fetch is available
+                const fetchFn = global.fetch || require('node-fetch');
+                const response = await fetchFn(process.env.GOOGLE_SHEETS_WEBHOOK_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        type: 'INQUIRY_FORM', // Added type for clarity
+                        timestamp: new Date().toISOString(),
+                        name,
+                        email,
+                        service,
+                        message
+                    })
+                });
+
                 if (response.ok) {
                     console.log('✅ Successfully forwarded to Google Sheets');
                 } else {
-                    console.error('❌ Google Sheets Webhook returned status:', response.status);
+                    const text = await response.text();
+                    console.error('❌ Google Sheets Webhook returned error:', response.status, text);
                 }
-            }).catch(gsError => {
+            } catch (gsError) {
                 console.error('❌ Google Sheets Background Error:', gsError.message);
-            });
+            }
         }
 
         res.status(201).json({ message: 'Inquiry received successfully', data: savedData });
 
     } catch (error) {
-        console.error('Create Inquiry Error:', error);
-        res.status(500).json({ error: 'Failed to process inquiry' });
+        console.error('Create Inquiry Error Stack:', error);
+        res.status(500).json({ error: error.message || 'Failed to process inquiry' });
     }
 };
 
-module.exports = { getInquiries, createInquiry };
+const deleteInquiry = async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        const isConfigured = process.env.SUPABASE_URL && (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY);
+
+        if (isConfigured && !process.env.SUPABASE_URL.includes('your-project-url')) {
+            const { error } = await supabase.from('inquiries').delete().eq('id', id);
+
+            if (error) {
+                console.error('Supabase Delete Error:', error);
+                throw error;
+            }
+            return res.status(200).json({ message: 'Inquiry deleted successfully' });
+        }
+
+        return res.status(404).json({ error: 'Database not configured, cannot delete' });
+
+    } catch (error) {
+        console.error('Delete Inquiry Error:', error);
+        res.status(500).json({ error: 'Failed to delete inquiry' });
+    }
+};
+
+module.exports = { getInquiries, createInquiry, deleteInquiry };
